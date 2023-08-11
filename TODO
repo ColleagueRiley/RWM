@@ -1,3 +1,4 @@
+- ./rwm -end to end manager 
 - icon support
 - (hide button)
 - icon support
@@ -9,3 +10,7 @@
 - set always top window
 - work spaces 
 - alt to move window optionally
+
+bugs:
+
+full screen only works right for the main widnow
