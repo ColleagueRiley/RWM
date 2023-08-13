@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <X11/keysym.h>
 
 #include "util.h"
 
@@ -54,9 +55,17 @@ int main(int argc, char** argv) {
     int i;
     for (i = 0; i < 2; i++) /* grab button (1 and 3)*/
         XGrabButton(display, 1 + (2 * i), 0, DefaultRootWindow(display), True, 
-                            ButtonPressMask|ButtonReleaseMask|PointerMotionMask, GrabModeAsync, GrabModeAsync, None, None);
+                            ButtonPressMask|ButtonReleaseMask, GrabModeSync, GrabModeAsync, None, None);
 
-    XSelectInput(display, XDefaultRootWindow(display), ExposureMask|ButtonPressMask|ButtonReleaseMask|KeyPressMask|KeyReleaseMask|PointerMotionMask|SubstructureNotifyMask); 
+    for (i = 0; i < 2; i++) /* grab XK_Alt_L and XK_Alt_R*/
+        XGrabKey(display, XK_Alt_L + i, Mod1Mask, DefaultRootWindow(display), True, GrabModeAsync, GrabModeSync);
+
+    //XGrabPointer(display, DefaultRootWindow(display), true,
+    //        PointerMotionMask | ButtonPressMask | ButtonReleaseMask, GrabModeSync, GrabModeAsync, None, None, CurrentTime);
+
+    
+
+    XSelectInput(display, XDefaultRootWindow(display), KeyPressMask|KeyReleaseMask|ExposureMask|ButtonPressMask|ButtonReleaseMask|PointerMotionMask|SubstructureNotifyMask); 
 
     net_wm_window_type = XInternAtom((Display *)display, "_NET_WM_WINDOW_TYPE", False);
     net_wm_window_type_dock = XInternAtom((Display *)display, "_NET_WM_WINDOW_TYPE_DOCK", False);
@@ -83,32 +92,61 @@ int main(int argc, char** argv) {
     XQueryTree(display, XDefaultRootWindow(display), &w, &w2, &wins, &size);
 
     /* draw basic title bar button onto pixmap */
-    Pixmap p = XCreatePixmap(display, XDefaultRootWindow(display), 60, 32, XDefaultDepth(display, s));
+    Pixmap p = XCreatePixmap(display, XDefaultRootWindow(display), 70, 32, XDefaultDepth(display, s));
 
     GC gc = XDefaultGC(display, s);
 
     XSetForeground(display, gc, RGB(27, 34, 36));
-    XFillRectangle(display, p, gc, 0, 0, 61, 32);
+    XFillRectangle(display, p, gc, 0, 0, 70, 32);
 
     XSetForeground(display, gc, RGB(90, 97, 100));
 
+    /* hide button */
+    XPoint points[3] = {
+                        3, (32 / 2) - 4,
+                        0, (32 / 2) + 2,
+                        6, (32 / 2) + 2
+                    };
+    
+    XFillPolygon(display, p, gc, points, 3, Convex, CoordModeOrigin);
+
+    XDrawRectangle(display, p, gc, 0, (32 / 2) + 3, 6, 1);
+
     /* minimize */
-    XDrawRectangle(display, p, gc, 7, 32 / 2, 6, 1);
+    XDrawRectangle(display, p, gc, 15, 32 / 2, 6, 1);
 
     /* fullscreen */
-    XDrawRectangle(display, p, gc, 22, (32 / 2) - 5, 10, 10);
+    XDrawRectangle(display, p, gc, 30, (32 / 2) - 5, 10, 10);
 
     /* draw x button*/
-    XDrawLine(display, p, gc, 41, 11,                 41 + 10,     11 + 10);
-    XDrawLine(display, p, gc, 41 + 10,  11,           41, 11 + 10);
+    XDrawLine(display, p, gc, 49, 11,                 49 + 10,     11 + 10);
+    XDrawLine(display, p, gc, 49 + 10,  11,           49, 11 + 10);
 
     for (i = 0; i < size; i++)
         initWindow(display, wins[i], p, &clients);
 
+    unsigned int key = 0;
+
+    char keyboard[32];
+    KeyCode keys[2] = {
+                        XKeysymToKeycode(display, XK_Alt_L),
+                        XKeysymToKeycode(display, XK_Alt_R)
+                        };
+
     while (1) {
         XNextEvent(display, &ev);
         switch (ev.type) {
-            case ButtonPress:
+            case KeyPress:
+            case KeyRelease:
+                XAllowEvents(display, ReplayKeyboard, ev.xkey.time);
+                XSync(display, 0);
+                
+                XQueryKeymap(display, keyboard); /* query the keymap */
+                break;
+            case ButtonPress:                            
+                XAllowEvents(display, ReplayPointer, ev.xbutton.time);
+                XSync(display, 0);
+
                 if(ev.xbutton.subwindow == None)
                     break;
 
@@ -127,9 +165,12 @@ int main(int argc, char** argv) {
                     redraw(display, p, &clients, i, true);
                     break;
                 }
-    
+
                 break;
             case MotionNotify:
+                XAllowEvents(display, ReplayPointer, ev.xmotion.time);
+                XSync(display, 0);
+
                 if (start.subwindow == None) {
                     for (i = 0; i < clients.len; i++) {
                         if (clients.data[i].border != ev.xbutton.subwindow)
@@ -138,37 +179,53 @@ int main(int argc, char** argv) {
                         XWindowAttributes a;
                         XGetWindowAttributes(display, clients.data[i].border, &a);
                         
-                        int x = 60 + ev.xbutton.x_root - a.x - a.width;
-                        
-                        XSetForeground(display, gc,  RGB(37, 44, 46));
-                        if (between(x, 7, 13)) {
-                            XFillRectangle(display, clients.data[i].border, gc, a.width - 60 + 7 - 4, 0, 16, 32);
-                            clients.data->status |= RWM_HOVER;
+                        int x = 70 + ev.xbutton.x_root - a.x - a.width;
 
-                            XSetForeground(display, gc, RGB(90, 97, 100));
-                            XDrawRectangle(display, clients.data[i].border, gc, (a.width - 60 + 7), 32 / 2, 6, 1);
+                        if (RWM_HOVER & clients.data[i].status) {
+                            clients.data[i].status ^= RWM_HOVER;
+                            XClearWindow(display, clients.data[i].border);
+                            redraw(display, p, &clients, i, false);
                         }
-                        else if (between(x, 22, 32)) {
-                            XFillRectangle(display, clients.data[i].border, gc, a.width - 60 + 21 - 1, 0, 16, 32);
-                            clients.data->status |= RWM_HOVER;
+
+                        XSetForeground(display, gc,  RGB(37, 44, 46));
+                        if (between(x, 0, 14)) {
+                            XFillRectangle(display, clients.data[i].border, gc, a.width - 70 - 5, 0, 16, 32);
+                            clients.data[i].status |= RWM_HOVER;
+
+                            XPoint points[3] = {
+                                (a.width - 70) + 3,  (32 / 2) - 4,
+                                (a.width - 70),      (32 / 2) + 2,
+                                (a.width - 70) + 6,  (32 / 2) + 2
+                            };
                             
                             XSetForeground(display, gc, RGB(90, 97, 100));
-                            XDrawRectangle(display, clients.data[i].border, gc, (a.width - 60 + 22), (32 / 2) - 5, 10, 10);
+                            XFillPolygon(display, clients.data[i].border, gc, points, 3, Convex, CoordModeOrigin);
+                            XDrawRectangle(display, clients.data[i].border, gc, (a.width - 70), (32 / 2) + 3, 6, 1);
                         }
-                        else if (between(x, 41, 51)) {
+                        else if (between(x, 15, 21)) {
+                            XFillRectangle(display, clients.data[i].border, gc, a.width - 70 + 11, 0, 16, 32);
+                            clients.data[i].status |= RWM_HOVER;
+
+                            XSetForeground(display, gc, RGB(90, 97, 100));
+                            XDrawRectangle(display, clients.data[i].border, gc, (a.width - 70 + 15), 32 / 2, 6, 1);
+                        }
+                        else if (between(x, 30, 40)) {
+                            XFillRectangle(display, clients.data[i].border, gc, a.width - 70 + 30 - 2, 0, 16, 32);
+                            clients.data[i].status |= RWM_HOVER;
+                            
+                            XSetForeground(display, gc, RGB(90, 97, 100));
+                            XDrawRectangle(display, clients.data[i].border, gc, (a.width - 70 + 30), (32 / 2) - 5, 10, 10);
+                        }
+                        else if (between(x, 49, 59)) {
                             XSetForeground(display, gc, RGB(202, 86, 92));
                             XFillRectangle(display, clients.data[i].border, gc, a.width - 60 + 41 - 2, 0, 16, 32);
 
                             XSetForeground(display, gc, RGB(90, 97, 100));
                             XDrawLine(display, clients.data[i].border, gc, (a.width - 60 + 41), 11,                 (a.width - 60 + 41) + 10,     11 + 10);
                             XDrawLine(display, clients.data[i].border, gc, (a.width - 60 + 41) + 10,  11,           (a.width - 60 + 41), 11 + 10);
-                            clients.data->status |= RWM_HOVER;
+                            clients.data[i].status |= RWM_HOVER;
                         } 
-                        else if (RWM_HOVER & clients.data->status) {
-                            clients.data->status |= !RWM_HOVER;
-                            XClearWindow(display, clients.data[i].border);
-                            redraw(display, p, &clients, i, false);
-                        }
+
 
                         break;
                     }
@@ -179,7 +236,11 @@ int main(int argc, char** argv) {
                 int ydiff = ev.xbutton.y_root - start.y_root;
 
                 for (i = 0; i < clients.len; i++) {
-                    if (clients.data[i].border != start.subwindow)
+                    if (clients.data[i].border != start.subwindow &&
+                        clients.data[i].window != start.subwindow ||
+                        (clients.data[i].window == start.subwindow && 
+                            (isPressed(display, keyboard, keys[0]) == false && isPressed(display, keyboard, keys[1]) == false))
+                    )
                         continue;
 
                     XMoveResizeWindow(display, clients.data[i].border,
@@ -201,27 +262,41 @@ int main(int argc, char** argv) {
                 }
 
                 break;
-            case ButtonRelease:
+            case ButtonRelease: {
+                Window w = start.subwindow;
+                start.subwindow = None;
+                XAllowEvents(display, ReplayPointer, ev.xbutton.time);
+                XSync(display, 0);
                 for (i = 0; i < clients.len; i++) {
-                    if (clients.data[i].border != start.subwindow) 
+                    if (clients.data[i].border != w) 
                         continue;
 
                     XWindowAttributes a;
-                    XGetWindowAttributes(display, clients.data[i].border, &a);
+                    XGetWindowAttributes(display, w, &a);
                     
-                    int x = 60 + ev.xbutton.x_root - a.x - a.width;
+                    int x = 70 + ev.xbutton.x_root - a.x - a.width;
                     
-                    if (between(x, 7, 13)) {
+                    if (between(x, 0, 14)) {
+                        if (RWM_HIDE & clients.data[i].status) {
+                            XMapWindow(display, clients.data[i].window);
+                            clients.data[i].status ^= RWM_HIDE;
+                            break;
+                        }
+
+                        XUnmapWindow(display, clients.data[i].window);
+                        clients.data[i].status |= RWM_HIDE;
+                    }
+                    if (between(x, 15, 21)) {
                         XUnmapWindow(display, clients.data[i].border);
                         XUnmapWindow(display, clients.data[i].window);
-                        clients.data->status |= RWM_MINI;
+                        clients.data[i].status |= RWM_MINI;
                     }
-                    else if (between(x, 22, 32)) {
+                    else if (between(x, 30, 40)) {
                         if (RWM_FULL & clients.data[i].status) {
                             XMoveResizeWindow(display, clients.data[i].window, clients.data[i].x, clients.data[i].y, clients.data[i].w, clients.data[i].h);
                             XMoveResizeWindow(display, clients.data[i].border, clients.data[i].x, clients.data[i].y - 32, clients.data[i].w, clients.data[i].h);
                             clients.data[i].width = clients.data[i].w;
-                            clients.data->status ^= RWM_FULL;
+                            clients.data[i].status ^= RWM_FULL;
 
                             redraw(display, p, &clients, i, true);
                             break;
@@ -232,7 +307,7 @@ int main(int argc, char** argv) {
                         clients.data[i].y = a.y;
                         clients.data[i].w = a.width;
                         clients.data[i].h = a.height;
-                        clients.data->status |= RWM_FULL;
+                        clients.data[i].status |= RWM_FULL;
 
                         XMoveResizeWindow(display, clients.data[i].window, 0, 32, DisplayWidth(display, s), DisplayHeight(display, s) - 32);
                         XMoveResizeWindow(display, clients.data[i].border, 0, 0, DisplayWidth(display, s), 32);
@@ -241,7 +316,7 @@ int main(int argc, char** argv) {
                         redraw(display, p, &clients, i, true);
                         break;
                     }
-                    else if (between(x, 41, 51)) {
+                    else if (between(x, 49, 59)) {
                         XEvent event;
                         event.xclient.type = ClientMessage;
                         event.xclient.window = clients.data[i].window;
@@ -253,9 +328,8 @@ int main(int argc, char** argv) {
                     }
                     break; 
                 }
-
-                start.subwindow = None;
                 break;
+            }
             case CreateNotify:
                 usleep(20000);
                 initWindow(display, ev.xcreatewindow.window, p, &clients);

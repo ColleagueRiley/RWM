@@ -1,6 +1,3 @@
-- ./rwm -end to end manager 
-- icon support
-- (hide button)
 - icon support
 
 - make it so mouse pos doesn't control focus
@@ -10,7 +7,3 @@
 - set always top window
 - work spaces 
 - alt to move window optionally
-
-bugs:
-
-full screen only works right for the main widnow

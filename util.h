@@ -15,7 +15,8 @@ Atom net_wm_window_type, net_wm_window_type_dock;
 typedef enum {
     RWM_FULL = (1L << 1),
     RWM_MINI = (1L << 2),
-    RWM_HOVER = (1L << 3)
+    RWM_HOVER = (1L << 3),
+    RWM_HIDE = (1L << 4)
 } client_status;
 
 typedef struct client {
@@ -33,8 +34,13 @@ typedef struct client_array {
 } client_array;
 
 inline void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check) ;
+inline unsigned char isPressed(Display* display, char keyboard[32], KeyCode key);
 
 #define RECT_COLLIDE(r, r2) (r.x + r.width >= r2.x && r.x <= r2.x + r2.width && r.y + r.height >= r2.y && r.y <= r2.y + r2.height)
+
+unsigned char isPressed(Display* display, char keyboard[32], KeyCode key) {
+	return (keyboard[key >> 3] & (1 << (key & 7)));				/* check if the key is pressed */
+}
 
 void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check) {
     client c = clients->data[i];
@@ -56,6 +62,9 @@ void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check
         return;
     }
 
+    if (RWM_HOVER & c.status )
+        XClearWindow(display, c.border);
+
     int s = XDefaultScreen(display);
     GC gc = XDefaultGC(display, s);
 
@@ -73,7 +82,7 @@ void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check
 
     XFree(name);
 
-    XCopyArea(display, p, c.border, gc, 0, 0, 60, 32, c.width - 60, 0);
+    XCopyArea(display, p, c.border, gc, 0, 0, 70, 32, c.width - 70, 0);
 
     static Atom NET_WM_ICON = (Atom)NULL;
     if (NET_WM_ICON == (Atom)NULL) 
