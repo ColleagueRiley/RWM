@@ -33,7 +33,23 @@ typedef struct client_array {
     size_t len;
 } client_array;
 
-inline void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check) ;
+
+/* 
+    basic syntax to add a new font
+    font_name("font name")
+*/
+
+#define font_name(x)  "-*-" x "-medium-r-normal-*-12-*-*-*-*-*-iso8859-*"
+char* font_names[] = {    
+    font_name("dejavu sans"),
+    font_name("liberation sans"),
+    font_name("droid sans"),
+    font_name("roboto"),
+    font_name("ubuntu"),
+    font_name("noto sans")
+};
+
+inline void redraw(Display* display, Pixmap p, client_array* clients, int i) ;
 inline unsigned char isPressed(Display* display, char keyboard[32], KeyCode key);
 
 #define RECT_COLLIDE(r, r2) (r.x + r.width >= r2.x && r.x <= r2.x + r2.width && r.y + r.height >= r2.y && r.y <= r2.y + r2.height)
@@ -42,28 +58,11 @@ unsigned char isPressed(Display* display, char keyboard[32], KeyCode key) {
 	return (keyboard[key >> 3] & (1 << (key & 7)));				/* check if the key is pressed */
 }
 
-void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check) {
+void redraw(Display* display, Pixmap p, client_array* clients, int i) {
     client c = clients->data[i];
-
-    if (check) {
-        XWindowAttributes w, wb;
-        XGetWindowAttributes(display, c.window, &w);
-        XGetWindowAttributes(display, c.border, &wb);
-
-        int i;
-        for (i = 0; i < clients->len; i++) {
-            XWindowAttributes b;
-            XGetWindowAttributes(display, clients->data[i].border, &b);
-
-            if (RECT_COLLIDE(w, b) || RECT_COLLIDE(wb, b))
-                redraw(display, p, clients, i, false);
-        }
-
-        return;
-    }
-
-    if (RWM_HOVER & c.status )
-        XClearWindow(display, c.border);
+    
+    if (RWM_HOVER & c.status)
+        XClearArea(display, c.border, c.width - 70, 0, 70, 32, false);
 
     int s = XDefaultScreen(display);
     GC gc = XDefaultGC(display, s);
@@ -71,16 +70,23 @@ void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check
     XSetForeground(display, gc, RGB(27, 34, 36));
     XFillRectangle(display, c.border, gc, 0, 0, c.width, 32);
 
+    XWindowAttributes attr;
+    XGetWindowAttributes(display, c.window, &attr);
+
+    printf("h\n");
     char* name = NULL;
+    if (c.window == None)
+        printf("end\n");
+
     XFetchName(display, c.window, &name);
 
     if (name != NULL) {
         size_t len = strlen(name);
         XSetForeground(display, gc, RGB(90, 97, 100));
-        XDrawString(display, c.border, XDefaultGC(display, s), (c.width - 100 - (len * 2)) / 4, 20, name, len);
-    }
+        XDrawString(display, c.border, XDefaultGC(display, s), (c.width - 200 - (len * 2)) / 4 , 20, name, len);
 
-    XFree(name);
+        XFree(name);
+    }
 
     XCopyArea(display, p, c.border, gc, 0, 0, 70, 32, c.width - 70, 0);
 
@@ -93,7 +99,7 @@ void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check
     unsigned long nitems, bytes_after;
     unsigned char *data = NULL;
     
-    if (XGetWindowProperty(display, c.window, NET_WM_ICON, 0, 1024, False, XA_STRING,
+    /*if (XGetWindowProperty(display, c.window, NET_WM_ICON, 0, 1024, False, XA_STRING,
                             &actual_type, &actual_format, &nitems, &bytes_after, &data) == Success) {
         
         if (actual_type == XA_CARDINAL && actual_format == 32 && data != NULL) {
@@ -105,7 +111,7 @@ void redraw(Display* display, Pixmap p, client_array* clients, int i, bool check
         }
         
         XFree(data);
-    }
+    }*/
 }
 
 void initWindow(Display* display, Window win, Pixmap p, client_array* clients) {
@@ -138,6 +144,9 @@ void initWindow(Display* display, Window win, Pixmap p, client_array* clients) {
     clients->data[clients->len].border = XCreateSimpleWindow(display, RootWindow(display, s), attr.x, ((attr.y) ? attr.y - 32 : 0), attr.width, 32, 1,
                                                         BlackPixel(display, s), WhitePixel(display, s)); 
     
+
+    XSelectInput(display, clients->data[clients->len].border, LeaveWindowMask|VisibilityChangeMask|ExposureMask|PointerMotionMask); 
+
     clients->data[clients->len].width = attr.width;
     clients->data[clients->len].status = 0;
 
@@ -145,15 +154,23 @@ void initWindow(Display* display, Window win, Pixmap p, client_array* clients) {
 
     XMapWindow(display, clients->data[clients->len].border);
 
-
     XSetWindowBorder(display, win, RGB(27, 34, 36));
     XSetWindowBorder(display, clients->data[clients->len].border, RGB(27, 34, 36));
 
-    if (attr.y == 0)
+    if (attr.y < 32)
         XMoveResizeWindow(display, win, attr.x, attr.y + 32, attr.width, attr.height);
 
-    redraw(display, p, clients, clients->len, false);
-    redraw(display, p, clients, clients->len, true);
+
+    XSizeHints* sh = XAllocSizeHints();
+    sh->flags = PSize | PPosition;
+    sh->min_width = 32;
+    sh->min_height = 32;
+    
+    XSetWMSizeHints(display, win, sh, XA_WM_NORMAL_HINTS);
+    XFree(sh);
+
+    XSync(display, 0);
+    //redraw(display, p, clients, clients->len);
 
     clients->len++;
 }
