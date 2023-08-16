@@ -1,13 +1,10 @@
 - icon support
-
-- bugs:
-- xfce-terminal causes crash
-- buttons don't highlight if border window is not selected
-
+- ctrl + alt + x (kill window)
 - resize window
-
-- flashing
 
 - set always top window
 - work spaces 
-- alt to move window optionally
+
+- bugs
+- name not lined up
+- flashing

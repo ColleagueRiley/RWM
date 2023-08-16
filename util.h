@@ -1,6 +1,8 @@
+/* X11 */
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 
+/* standard libraries */
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -22,6 +24,8 @@ typedef enum {
 typedef struct client {
     Window window;
     Window border;
+    Pixmap icon;
+
     unsigned int width;
     unsigned int status;
     unsigned int x, y, w, h;
@@ -49,18 +53,14 @@ char* font_names[] = {
     font_name("noto sans")
 };
 
-inline void redraw(Display* display, Pixmap p, client_array* clients, int i) ;
-inline unsigned char isPressed(Display* display, char keyboard[32], KeyCode key);
+inline void redraw(Display* display, Pixmap p, client c) ;
 
 #define RECT_COLLIDE(r, r2) (r.x + r.width >= r2.x && r.x <= r2.x + r2.width && r.y + r.height >= r2.y && r.y <= r2.y + r2.height)
 
-unsigned char isPressed(Display* display, char keyboard[32], KeyCode key) {
-	return (keyboard[key >> 3] & (1 << (key & 7)));				/* check if the key is pressed */
-}
+void redraw(Display* display, Pixmap p, client c) {
+    if (c.border == None)
+        return;
 
-void redraw(Display* display, Pixmap p, client_array* clients, int i) {
-    client c = clients->data[i];
-    
     if (RWM_HOVER & c.status)
         XClearArea(display, c.border, c.width - 70, 0, 70, 32, false);
 
@@ -73,10 +73,7 @@ void redraw(Display* display, Pixmap p, client_array* clients, int i) {
     XWindowAttributes attr;
     XGetWindowAttributes(display, c.window, &attr);
 
-    printf("h\n");
     char* name = NULL;
-    if (c.window == None)
-        printf("end\n");
 
     XFetchName(display, c.window, &name);
 
@@ -89,32 +86,17 @@ void redraw(Display* display, Pixmap p, client_array* clients, int i) {
     }
 
     XCopyArea(display, p, c.border, gc, 0, 0, 70, 32, c.width - 70, 0);
-
-    static Atom NET_WM_ICON = (Atom)NULL;
-    if (NET_WM_ICON == (Atom)NULL) 
-        NET_WM_ICON = XInternAtom(display, "_NET_WM_ICON", False);
-
-    Atom actual_type;
-    int actual_format;
-    unsigned long nitems, bytes_after;
-    unsigned char *data = NULL;
-    
-    /*if (XGetWindowProperty(display, c.window, NET_WM_ICON, 0, 1024, False, XA_STRING,
-                            &actual_type, &actual_format, &nitems, &bytes_after, &data) == Success) {
-        
-        if (actual_type == XA_CARDINAL && actual_format == 32 && data != NULL) {
-            XImage *image = XCreateImage(display, DefaultVisual(display, s), 32, ZPixmap, 0,
-                                        (char *)data, 32, 32, 32, 0);
-
-            //XPutImage(display, c.border, XDefaultGC(display, s), image,
-            //        0, 0, 0, 0, 5, 5);
-        }
-        
-        XFree(data);
-    }*/
 }
 
 void initWindow(Display* display, Window win, Pixmap p, client_array* clients) {
+    int i;
+
+    for (i = 0; i < clients->len; i++)
+        if (clients->data[i].window == win || 
+            clients->data[i].border == win
+        )
+            return;
+
     XWindowAttributes attr;
     XGetWindowAttributes(display, win, &attr);
 
@@ -123,7 +105,23 @@ void initWindow(Display* display, Window win, Pixmap p, client_array* clients) {
     unsigned long nitems, bytes_after;
     unsigned char* prop_data = NULL;
 
-    int i;
+    if (clients->cap < (clients->len + 1)) {
+        clients->cap += 5;
+        
+        client* nclients = malloc(sizeof(client) * clients->cap);
+        memcpy(nclients, clients->data, sizeof(client) * (clients->len + 1));
+
+        free(clients->data);
+        clients->data = nclients;
+    } 
+
+    int s = XDefaultScreen(display);
+    
+    /* check if the window wants a border or not */
+    bool border = true; 
+
+    if (attr.override_redirect)
+        border = false;
 
     /* if window has no border atom */
     if (XGetWindowProperty(display, win, net_wm_window_type, 0, 1, False,
@@ -131,46 +129,64 @@ void initWindow(Display* display, Window win, Pixmap p, client_array* clients) {
                             &prop_data) == Success) 
                 for (i = 0; i < nitems; i++)
                     if (actual_format == 32 && ((Atom*)prop_data)[i] == net_wm_window_type_dock)
-                        return;
+                        border = false;
 
-    if (clients->cap < clients->len) {
-        clients->cap += 5;
-        clients->data = realloc(clients->data, clients->cap);
-    } 
+    static Atom atom = None;
+    if (atom == None)
+        atom = XInternAtom(display, "_MOTIF_WM_HINTS", False);
 
-    int s = XDefaultScreen(display);
-    
-    clients->data[clients->len].window = win;  
-    clients->data[clients->len].border = XCreateSimpleWindow(display, RootWindow(display, s), attr.x, ((attr.y) ? attr.y - 32 : 0), attr.width, 32, 1,
-                                                        BlackPixel(display, s), WhitePixel(display, s)); 
-    
+    unsigned char *prop;
 
-    XSelectInput(display, clients->data[clients->len].border, LeaveWindowMask|VisibilityChangeMask|ExposureMask|PointerMotionMask); 
+    if (XGetWindowProperty(display, win, atom, 0, 5, False, AnyPropertyType,
+                        &actual_type, &actual_format, &nitems, &bytes_after, &prop) == Success) {
+        
+        if (nitems == 5 && (!((long *)prop)[0] & (1L << 1)))
+            border = false;
 
-    clients->data[clients->len].width = attr.width;
-    clients->data[clients->len].status = 0;
+        XFree(prop);
+    }
 
-    XChangeProperty(display, clients->data[clients->len].border, net_wm_window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *)&net_wm_window_type_dock, 1);
+    clients->data[clients->len].window = win;
+    clients->data[clients->len].border = None;  
+printf("h\n");
+    if (border) {
+        clients->data[clients->len].border = XCreateSimpleWindow(display, RootWindow(display, s), attr.x, ((attr.y) ? attr.y - 32 : 0), attr.width, 32, 1,
+                                                            BlackPixel(display, s), WhitePixel(display, s)); 
+        
 
-    XMapWindow(display, clients->data[clients->len].border);
+        XSelectInput(display, clients->data[clients->len].border, LeaveWindowMask|VisibilityChangeMask|ExposureMask|PointerMotionMask); 
 
-    XSetWindowBorder(display, win, RGB(27, 34, 36));
-    XSetWindowBorder(display, clients->data[clients->len].border, RGB(27, 34, 36));
+        clients->data[clients->len].width = attr.width;
+        clients->data[clients->len].status = 0;
 
-    if (attr.y < 32)
-        XMoveResizeWindow(display, win, attr.x, attr.y + 32, attr.width, attr.height);
+        XChangeProperty(display, clients->data[clients->len].border, net_wm_window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *)&net_wm_window_type_dock, 1);
 
+        XMapWindow(display, clients->data[clients->len].border);
+
+        XSetWindowBorder(display, clients->data[clients->len].border, RGB(27, 34, 36));
+
+        if (attr.y < 32)
+            XMoveResizeWindow(display, win, attr.x, attr.y + 32, attr.width, attr.height);
+    }
+
+    clients->data[clients->len].icon = None;
+
+    XWMHints* h = XAllocWMHints();
+    h->flags = IconMaskHint;
+    h->icon_pixmap = clients->data[clients->len].icon;
 
     XSizeHints* sh = XAllocSizeHints();
     sh->flags = PSize | PPosition;
     sh->min_width = 32;
     sh->min_height = 32;
     
+    XSetWMHints(display, win, h);
     XSetWMSizeHints(display, win, sh, XA_WM_NORMAL_HINTS);
+
     XFree(sh);
+    XFree(h);
 
     XSync(display, 0);
-    //redraw(display, p, clients, clients->len);
 
     clients->len++;
 }

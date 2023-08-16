@@ -20,16 +20,19 @@
 *
 */
 
+/* standard library headers */
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <X11/keysym.h>
-#include <X11/Xutil.h>
 
+#include <X11/Xutil.h> /* X11 utilities */
+
+/* utilities, macros, functions, structures */
 #include "util.h"
 
 int main(int argc, char** argv) {
-    if (argc > 1) {
+    if (argc > 1) { /* check for args */
+        /* check if this arg is "end" */ 
         if (*(int*)argv[1] == *(int*)"end\0") {
             FILE* f = fopen("/tmp/RWM_END", "w+");
             
@@ -39,19 +42,17 @@ int main(int argc, char** argv) {
         }
     } 
 
-	struct stat tmp;
-
-    client_array clients; 
-    clients.data = malloc(sizeof(client) * 10);
-    clients.cap = 10;
-    clients.len = 0;
- 
+    /* init */
+    
+    /* create display */
     Display* display = XOpenDisplay(0);    
 
     if (display == NULL) {
         printf("RWM : Failed to load X11 display. Please ensure an X11 server is running.\n");
         return 1;
     }
+
+    /* events */
 
     int i;
     for (i = 0; i < 2; i++) /* grab button (1 and 3)*/
@@ -63,17 +64,20 @@ int main(int argc, char** argv) {
 
     XSelectInput(display, XDefaultRootWindow(display), VisibilityChangeMask|KeyPressMask|KeyReleaseMask|ExposureMask|ButtonPressMask|ButtonReleaseMask|PointerMotionMask|SubstructureNotifyMask); 
 
+    /* load atoms */
+
     net_wm_window_type = XInternAtom((Display *)display, "_NET_WM_WINDOW_TYPE", False);
     net_wm_window_type_dock = XInternAtom((Display *)display, "_NET_WM_WINDOW_TYPE_DOCK", False);
 
     Atom WM_PROTOCOLS = XInternAtom(display, "WM_PROTOCOLS", False);
     Atom WM_DELETE_WINDOW = XInternAtom(display, "WM_DELETE_WINDOW", False);
 
+
+    /* variables for the loop */
     XWindowAttributes attr;
     XButtonEvent start;
-    XEvent ev;
 
-    Window createWindow, focusWindow;
+    Window createWindow = None, focusWindow;
 
     start.subwindow = None;
 
@@ -88,12 +92,6 @@ int main(int argc, char** argv) {
         XSetFont(display, XDefaultGC(display, s), font_info->fid);
     else
         printf("Failed to load a font, using default font\n");
-
-    Window* wins;
-    Window w, w2;
-    unsigned int size;
-
-    XQueryTree(display, XDefaultRootWindow(display), &w, &w2, &wins, &size);
 
     /* draw basic title bar button onto pixmap */
     Pixmap p = XCreatePixmap(display, XDefaultRootWindow(display), 70, 32, XDefaultDepth(display, s));
@@ -126,26 +124,39 @@ int main(int argc, char** argv) {
     XDrawLine(display, p, gc, 49, 11,                 49 + 10,     11 + 10);
     XDrawLine(display, p, gc, 49 + 10,  11,           49, 11 + 10);
 
-    for (i = 0; i < size; i++)
-        initWindow(display, wins[i], p, &clients);
+    /* init windows that already exist */
 
-    unsigned int key = 0;
+    Window* wins;
+    Window w, w2;
+    unsigned int size;
 
-    char keyboard[32];
-    KeyCode keys[2] = {
-                        XKeysymToKeycode(display, XK_Alt_L),
-                        XKeysymToKeycode(display, XK_Alt_R)
-                        };
-    XQueryKeymap(display, keyboard);
+    XQueryTree(display, XDefaultRootWindow(display), &w, &w2, &wins, &size);
+
+    /* init clients array */
+    client_array clients;
+    
+    clients.cap = ((size > 10) ? (size + 5) : 10);
+    clients.data = malloc(sizeof(client) * clients.cap);
+    clients.len = 0;
+
+    XEvent ev;
 
     while (1) {
         XNextEvent(display, &ev);
+
+        XQueryTree(display, XDefaultRootWindow(display), &w, &w2, &wins, &size);
+        for (i = 0; i < size; i++)
+            initWindow(display, wins[i], p, &clients);
+
         switch (ev.type) {
             case Expose:
             case VisibilityNotify: {
-                if (ev.type == VisibilityNotify && ev.xvisibility.state)
+                if (
+                    ev.type == VisibilityNotify && 
+                    ev.xvisibility.state != VisibilityPartiallyObscured
+                )
                     break;
-                    
+
                 Window w = (ev.type == Expose) ? ev.xexpose.window : ev.xvisibility.window;
 
                 XWindowAttributes attr;
@@ -158,18 +169,11 @@ int main(int argc, char** argv) {
                     if (clients.data[i].border != w)
                         continue;
 
-                    redraw(display, p, &clients, i);
+                    redraw(display, p, clients.data[i]);
                     break;
                 }
                 break;
             }
-            case KeyPress:
-            case KeyRelease:
-                XAllowEvents(display, ReplayKeyboard, ev.xkey.time);
-                XSync(display, 0);
-                
-                XQueryKeymap(display, keyboard); /* query the keymap */
-                break;
             case ButtonPress:                            
                 XAllowEvents(display, ReplayPointer, ev.xbutton.time);
                 XSync(display, 0);
@@ -178,18 +182,21 @@ int main(int argc, char** argv) {
                     break;
 
                 XGetWindowAttributes(display, ev.xbutton.subwindow, &attr);
-                start = ev.xbutton;
-
-                XGrabPointer(display, DefaultRootWindow(display), false,
-                                    ButtonPressMask|ButtonReleaseMask|ButtonMotionMask | PointerMotionMask, GrabModeAsync, GrabModeAsync, 
-                                    RootWindow(display, XDefaultScreen(display)), None, CurrentTime);
 
                 for (i = 0; i < clients.len; i++) {
-                    if (clients.data[i].window != start.subwindow && 
-                        clients.data[i].border != start.subwindow
+                    if (clients.data[i].window != ev.xbutton.subwindow && 
+                        clients.data[i].border != ev.xbutton.subwindow
                     )
                         continue;
                 
+                    if (clients.data[i].border == ev.xbutton.subwindow) {
+                        start = ev.xbutton;
+
+                        XGrabPointer(display, DefaultRootWindow(display), false,
+                                    ButtonPressMask|ButtonReleaseMask|ButtonMotionMask | PointerMotionMask, GrabModeAsync, GrabModeAsync, 
+                                    RootWindow(display, XDefaultScreen(display)), None, CurrentTime);
+                    }
+
                     XRaiseWindow(display, clients.data[i].border);
                     XRaiseWindow(display, clients.data[i].window);
 
@@ -216,19 +223,6 @@ int main(int argc, char** argv) {
                             continue;
 
                         XGetWindowAttributes(display, clients.data[i].border, &a);
-                        
-                        /*if (ev.xmotion.y <= 0) {
-                            XWindowAttributes a2;
-                            XGetWindowAttributes(display, clients.data[i].window, &a2);
-                            
-                            XMoveResizeWindow(display, clients.data[i].window,
-                                a2.x, a2.y,
-                                a2.width, 
-                                a2.height - (ev.xmotion.y_root - ev.xmotion.y)
-                            );
-
-                            break;
-                        }*/
 
                         int x = 70 + ev.xbutton.x_root - a.x - a.width;
 
@@ -237,7 +231,7 @@ int main(int argc, char** argv) {
                             if (between(x, 0, 59)) {
                                 XClearArea(display, clients.data[i].border, a.width - 70, 0, 70, 32, false);
                             }
-                            redraw(display, p, &clients, i);
+                            redraw(display, p, clients.data[i]);
                         }
 
                         XSetForeground(display, gc,  RGB(37, 44, 46));
@@ -288,14 +282,10 @@ int main(int argc, char** argv) {
                 int xdiff = ev.xbutton.x_root - start.x_root;
                 int ydiff = ev.xbutton.y_root - start.y_root;
 
-                for (i = 0; i < clients.len; i++) {
-                    if (clients.data[i].border != start.subwindow &&
-                        clients.data[i].window != start.subwindow ||
-                        (clients.data[i].window == start.subwindow && 
-                            (isPressed(display, keyboard, keys[0]) == false && isPressed(display, keyboard, keys[1]) == false))
-                    )
+                for (i = 0; i < clients.len; i++) {            
+                    if (clients.data[i].border != start.subwindow)
                         continue;
-                    
+
                     if ((attr.x + attr.width >= DisplayWidth(display, s) && xdiff > 0) || 
                         (attr.x <= 0 && xdiff < 0))
                             xdiff = 0; 
@@ -307,14 +297,16 @@ int main(int argc, char** argv) {
                     if (xdiff == 0 && ydiff == 0)
                         break;
 
-                    XMoveResizeWindow(display, clients.data[i].border,
-                        attr.x + (start.button == 1 ? xdiff : 0),
-                        attr.y + (start.button == 1 ? ydiff : 0),
-                        MAX(1, attr.width + (start.button == 3 ? xdiff : 0)),
-                        32);
 
                     XWindowAttributes a;
                     XGetWindowAttributes(display, clients.data[i].window, &a);
+
+                    XMoveResizeWindow(display, clients.data[i].border,
+                        attr.x + (start.button == 1 ? xdiff : 0),
+                        attr.y + (start.button == 1 ? ydiff : 0),
+                        a.width, 32
+                    );
+
                     XMoveResizeWindow(display, clients.data[i].window,
                         attr.x + (start.button == 1 ? xdiff : 0),
                         attr.y + (start.button == 1 ? ydiff : 0) + 32,
@@ -332,7 +324,7 @@ int main(int argc, char** argv) {
                     if (RWM_HOVER & clients.data[i].status) {
                         clients.data[i].status ^= RWM_HOVER;
                         XClearArea(display, clients.data[i].border, clients.data[i].width, 0, 70, 32, false);
-                        redraw(display, p, &clients, i);
+                        redraw(display, p, clients.data[i]);
                     }
 
                     break;
@@ -347,7 +339,7 @@ int main(int argc, char** argv) {
                 XSync(display, 0);
                 
                 for (i = 0; i < clients.len; i++) {
-                    if (clients.data[i].border != w) 
+                    if (clients.data[i].border != w || clients.data[i].border == None) 
                         continue;
 
                     XWindowAttributes a;
@@ -405,20 +397,9 @@ int main(int argc, char** argv) {
                 }
                 break;
             }
-            case CreateNotify:
-                createWindow = ev.xcreatewindow.window;
-                break;
-
-            case MapNotify:
-                if (createWindow == ev.xmap.window) {
-                    initWindow(display, ev.xmap.window, p, &clients);
-                    createWindow = None;
-                }
-                break;
             case UnmapNotify:
                 if (focusWindow == ev.xunmap.window)
                     XSetInputFocus(display, XDefaultRootWindow(display), RevertToNone, CurrentTime);
-
 
                 for (i = 0; i < clients.len; i++) {
                     if (clients.data[i].window != ev.xunmap.window)
@@ -426,8 +407,9 @@ int main(int argc, char** argv) {
 
                     if (RWM_HIDE & clients.data[i].status)
                         break;
-
-                    XUnmapWindow(display, clients.data[i].border);
+                    
+                    if (clients.data[i].border != None)
+                        XUnmapWindow(display, clients.data[i].border);
                     break;
                 }
                 break;
@@ -436,7 +418,8 @@ int main(int argc, char** argv) {
                     if (clients.data[i].window != ev.xdestroywindow.window)
                         continue;
 
-                    XDestroyWindow(display, clients.data[i].border);
+                    if (clients.data[i].border != None)
+                        XDestroyWindow(display, clients.data[i].border);
                 
                     /* 
                     clients +_ 
@@ -466,6 +449,7 @@ int main(int argc, char** argv) {
                 break;
         }  
         
+        struct stat tmp;
         if (stat("/tmp/RWM_END", &tmp) == 0) {
             remove("/tmp/RWM_END");
             break;
@@ -477,7 +461,7 @@ int main(int argc, char** argv) {
     XSetInputFocus(display, XDefaultRootWindow(display), RevertToNone, CurrentTime);
 
     XFreePixmap(display, p);
-    for (i = 0; i < clients.len; i++) 
+    for (i = 0; i < clients.len; i++)
         XDestroyWindow(display, clients.data[i].border);
     
     free(clients.data);
