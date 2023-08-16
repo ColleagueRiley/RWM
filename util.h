@@ -148,7 +148,7 @@ void initWindow(Display* display, Window win, Pixmap p, client_array* clients) {
 
     clients->data[clients->len].window = win;
     clients->data[clients->len].border = None;  
-printf("h\n");
+    
     if (border) {
         clients->data[clients->len].border = XCreateSimpleWindow(display, RootWindow(display, s), attr.x, ((attr.y) ? attr.y - 32 : 0), attr.width, 32, 1,
                                                             BlackPixel(display, s), WhitePixel(display, s)); 
