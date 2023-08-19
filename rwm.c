@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include <X11/Xutil.h> /* X11 utilities */
+#include <X11/cursorfont.h>
 
 /* utilities, macros, functions, structures */
 #include "util.h"
@@ -59,10 +60,12 @@ int main(int argc, char** argv) {
         XGrabButton(display, 1 + (2 * i), 0, DefaultRootWindow(display), True, 
                            ButtonPressMask|ButtonReleaseMask|PointerMotionMask, GrabModeSync, GrabModeAsync, None, None);
 
-    for (i = 0; i < 2; i++) /* grab XK_Alt_L and XK_Alt_R*/
-        XGrabKey(display, XK_Alt_L + i, Mod1Mask, DefaultRootWindow(display), True, GrabModeAsync, GrabModeSync);
+    //for (i = 0; i < 2; i++) /* grab XK_Alt_L and XK_Alt_R*/
+    //    XGrabKey(display, XK_Alt_L + i, Mod1Mask, DefaultRootWindow(display), True, GrabModeAsync, GrabModeSync);
 
-    XSelectInput(display, XDefaultRootWindow(display), VisibilityChangeMask|KeyPressMask|KeyReleaseMask|ExposureMask|ButtonPressMask|ButtonReleaseMask|PointerMotionMask|SubstructureNotifyMask); 
+    XGrabKey(display, XK_x, ControlMask | Mod1Mask, XDefaultRootWindow(display), false, GrabModeAsync, GrabModeAsync);
+
+    XSelectInput(display, XDefaultRootWindow(display), StructureNotifyMask|KeyPressMask|KeyReleaseMask|ExposureMask|ButtonPressMask|ButtonReleaseMask|PointerMotionMask|SubstructureNotifyMask); 
 
     /* load atoms */
 
@@ -77,7 +80,7 @@ int main(int argc, char** argv) {
     XWindowAttributes attr;
     XButtonEvent start;
 
-    Window createWindow = None, focusWindow;
+    Window createWindow = None, focusWindow, cursorWindow;
 
     start.subwindow = None;
 
@@ -95,7 +98,6 @@ int main(int argc, char** argv) {
 
     /* draw basic title bar button onto pixmap */
     Pixmap p = XCreatePixmap(display, XDefaultRootWindow(display), 70, 32, XDefaultDepth(display, s));
-
     GC gc = XDefaultGC(display, s);
 
     XSetForeground(display, gc, RGB(27, 34, 36));
@@ -111,7 +113,6 @@ int main(int argc, char** argv) {
                     };
     
     XFillPolygon(display, p, gc, points, 3, Convex, CoordModeOrigin);
-
     XDrawRectangle(display, p, gc, 0, (32 / 2) + 3, 6, 1);
 
     /* minimize */
@@ -124,6 +125,10 @@ int main(int argc, char** argv) {
     XDrawLine(display, p, gc, 49, 11,                 49 + 10,     11 + 10);
     XDrawLine(display, p, gc, 49 + 10,  11,           49, 11 + 10);
 
+    /* set background */
+    XSetWindowBackground(display, XDefaultRootWindow(display), RGB(100, 100, 120));
+    XClearWindow(display, XDefaultRootWindow(display));
+
     /* init windows that already exist */
 
     Window* wins;
@@ -134,19 +139,41 @@ int main(int argc, char** argv) {
 
     /* init clients array */
     client_array clients;
-    
     clients.cap = ((size > 10) ? (size + 5) : 10);
     clients.data = malloc(sizeof(client) * clients.cap);
     clients.len = 0;
+
+    for (i = 0; i < size; i++)
+        initWindow(display, wins[i], p, &clients);
+
+    /* cursor */
+    Cursor cursors[] = {
+                        XCreateFontCursor(display, XC_arrow),
+                        XCreateFontCursor(display, XC_pirate),
+                        
+                        XCreateFontCursor(display, XC_left_side),
+                        XCreateFontCursor(display, XC_top_left_corner),
+                        XCreateFontCursor(display, XC_top_side),
+                        XCreateFontCursor(display, XC_top_right_corner),
+
+                        XCreateFontCursor(display, XC_right_side),
+                        XCreateFontCursor(display, XC_bottom_right_corner),
+                        XCreateFontCursor(display, XC_bottom_side),
+                        XCreateFontCursor(display, XC_bottom_left_corner),
+                    };
+
+    size_t currentCursor = 0, cursetCursor = 0;
 
     XEvent ev;
 
     while (1) {
         XNextEvent(display, &ev);
 
-        XQueryTree(display, XDefaultRootWindow(display), &w, &w2, &wins, &size);
-        for (i = 0; i < size; i++)
-            initWindow(display, wins[i], p, &clients);
+        if (cursetCursor != currentCursor) {
+            XDefineCursor(display, XDefaultRootWindow(display), cursors[currentCursor]);
+        
+            cursetCursor = currentCursor;
+        }
 
         switch (ev.type) {
             case Expose:
@@ -169,11 +196,15 @@ int main(int argc, char** argv) {
                     if (clients.data[i].border != w)
                         continue;
 
-                    redraw(display, p, clients.data[i]);
+                    redraw(display, p, clients.data[i], font_info);
                     break;
                 }
                 break;
             }
+            case KeyPress:
+                if (ev.xkey.keycode == XK_x)
+                    currentCursor = 1;
+                break;
             case ButtonPress:                            
                 XAllowEvents(display, ReplayPointer, ev.xbutton.time);
                 XSync(display, 0);
@@ -188,13 +219,33 @@ int main(int argc, char** argv) {
                         clients.data[i].border != ev.xbutton.subwindow
                     )
                         continue;
-                
-                    if (clients.data[i].border == ev.xbutton.subwindow) {
+                    
+                    currentCursor = 0;
+                    if (clients.data[i].window == ev.xbutton.subwindow) {
+                        int x = ev.xmotion.x - attr.x;
+                        if (x <= 6) {
+                                if ((ev.xmotion.y - attr.y - attr.height) + 3 >= 3)
+                                    currentCursor = 9;
+                                else 
+                                    currentCursor = 2;
+                        }
+                        else if (x >= clients.data[i].width - 6) {
+                            if ((ev.xmotion.y - attr.y - attr.height) + 3 >= 3)
+                                currentCursor = 7;
+                            else
+                                currentCursor = 6;
+                        }
+                        else if ((ev.xmotion.y - attr.y - (attr.height - 3)) >= 3)
+                            currentCursor = 8;
+                    }
+
+                    else if (clients.data[i].border == ev.xbutton.subwindow || currentCursor) {
                         start = ev.xbutton;
 
                         XGrabPointer(display, DefaultRootWindow(display), false,
                                     ButtonPressMask|ButtonReleaseMask|ButtonMotionMask | PointerMotionMask, GrabModeAsync, GrabModeAsync, 
                                     RootWindow(display, XDefaultScreen(display)), None, CurrentTime);
+                        
                     }
 
                     XRaiseWindow(display, clients.data[i].border);
@@ -215,64 +266,87 @@ int main(int argc, char** argv) {
                 XAllowEvents(display, ReplayPointer, ev.xmotion.time);
                 XSync(display, 0);
 
+                currentCursor = 0;
+
                 if (start.subwindow == None) {
                     for (i = 0; i < clients.len; i++) {
                         XWindowAttributes a;
 
-                        if (clients.data[i].border != ev.xbutton.window)
-                            continue;
+                        if (XDefaultRootWindow(display) == ev.xbutton.window) {
+                            XGetWindowAttributes(display, clients.data[i].window, &a);
+                         
+                            if (RECT_COLLIDE_POINT(ev.xmotion.x, ev.xmotion.y, a.x - 2, a.y - 2, a.width + 4, a.height + 4) == false)
+                                continue;
 
+                            int x = ev.xmotion.x - a.x;
+                            if (x <= 6) {
+                                    if ((ev.xmotion.y - a.y - a.height) + 3 >= 3)
+                                        currentCursor = 9;
+                                    else 
+                                        currentCursor = 2;
+                            }
+                            else if (x >= clients.data[i].width - 6) {
+                                if ((ev.xmotion.y - a.y - a.height) + 3 >= 3)
+                                    currentCursor = 7;
+                                else
+                                    currentCursor = 6;
+                            }
+                            else if ((ev.xmotion.y - a.y - a.height) + 3 >= 3)
+                                currentCursor = 8;
+
+                            cursorWindow = clients.data[i].window; 
+                            
+                            break;
+                        }
+
+                        else if (clients.data[i].border != ev.xbutton.window)
+                            continue;
+                        
                         XGetWindowAttributes(display, clients.data[i].border, &a);
 
                         int x = 70 + ev.xbutton.x_root - a.x - a.width;
 
-                        if (RWM_HOVER & clients.data[i].status) {
-                            clients.data[i].status ^= RWM_HOVER;
-                            if (between(x, 0, 59)) {
-                                XClearArea(display, clients.data[i].border, a.width - 70, 0, 70, 32, false);
-                            }
-                            redraw(display, p, clients.data[i]);
-                        }
+                        if (RWM_HOVER & clients.data[i].status)
+                            redraw(display, p, clients.data[i], font_info);
 
-                        XSetForeground(display, gc,  RGB(37, 44, 46));
-                        if (between(x, 0, 14)) {
-                            XFillRectangle(display, clients.data[i].border, gc, a.width - 70 - 5, 0, 16, 32);
+                        XSetForeground(display, gc,  RGB(37, 44, 46));  
+                        if (between(x, 15, 21)) {
                             clients.data[i].status |= RWM_HOVER;
 
-                            XPoint points[3] = {
-                                (a.width - 70) + 3,  (32 / 2) - 4,
-                                (a.width - 70),      (32 / 2) + 2,
-                                (a.width - 70) + 6,  (32 / 2) + 2
-                            };
-                            
-                            XSetForeground(display, gc, RGB(90, 97, 100));
-                            XFillPolygon(display, clients.data[i].border, gc, points, 3, Convex, CoordModeOrigin);
-                            XDrawRectangle(display, clients.data[i].border, gc, (a.width - 70), (32 / 2) + 3, 6, 1);
-                        }
-                        else if (between(x, 15, 21)) {
                             XFillRectangle(display, clients.data[i].border, gc, a.width - 70 + 11, 0, 16, 32);
-                            clients.data[i].status |= RWM_HOVER;
-
+                            
                             XSetForeground(display, gc, RGB(90, 97, 100));
                             XDrawRectangle(display, clients.data[i].border, gc, (a.width - 70 + 15), 32 / 2, 6, 1);
                         }
                         else if (between(x, 30, 40)) {
-                            XFillRectangle(display, clients.data[i].border, gc, a.width - 70 + 30 - 2, 0, 16, 32);
                             clients.data[i].status |= RWM_HOVER;
+                            
+                            XFillRectangle(display, clients.data[i].border, gc, a.width - 70 + 30 - 2, 0, 16, 32);
                             
                             XSetForeground(display, gc, RGB(90, 97, 100));
                             XDrawRectangle(display, clients.data[i].border, gc, (a.width - 70 + 30), (32 / 2) - 5, 10, 10);
                         }
                         else if (between(x, 49, 59)) {
+                            clients.data[i].status |= RWM_HOVER;
+                            
                             XSetForeground(display, gc, RGB(202, 86, 92));
                             XFillRectangle(display, clients.data[i].border, gc, a.width - 60 + 41 - 2, 0, 16, 32);
 
                             XSetForeground(display, gc, RGB(90, 97, 100));
                             XDrawLine(display, clients.data[i].border, gc, (a.width - 60 + 41), 11,                 (a.width - 60 + 41) + 10,     11 + 10);
                             XDrawLine(display, clients.data[i].border, gc, (a.width - 60 + 41) + 10,  11,           (a.width - 60 + 41), 11 + 10);
-                            clients.data[i].status |= RWM_HOVER;
                         } 
-
+                        else {
+                            if (ev.xmotion.y > 3)
+                                break;
+                            
+                            if (ev.xmotion.x <= 6)
+                                currentCursor = 3;
+                            else if (ev.xmotion.x >= clients.data[i].width - 6)
+                                currentCursor = 5;
+                            else    
+                                currentCursor = 4;
+                        }
 
                         break;
                     }
@@ -298,6 +372,7 @@ int main(int argc, char** argv) {
                         break;
 
 
+                    printf("%i\n", currentCursor);
                     XWindowAttributes a;
                     XGetWindowAttributes(display, clients.data[i].window, &a);
 
@@ -321,11 +396,9 @@ int main(int argc, char** argv) {
                 for (i = 0; i < clients.len; i++) {
                     if (clients.data[i].border != ev.xmotion.window)
                         continue;
-                    if (RWM_HOVER & clients.data[i].status) {
-                        clients.data[i].status ^= RWM_HOVER;
-                        XClearArea(display, clients.data[i].border, clients.data[i].width, 0, 70, 32, false);
-                        redraw(display, p, clients.data[i]);
-                    }
+
+                    if (RWM_HOVER & clients.data[i].status)
+                        redraw(display, p, clients.data[i], font_info);
 
                     break;
                 }
@@ -438,12 +511,26 @@ int main(int argc, char** argv) {
                     break;
                 }
                 break;
-		    case ClientMessage:
-			    if (ev.xclient.data.l[0] == (long int)XInternAtom(display, "WM_DELETE_WINDOW", 1))
-                    goto quit;
+            case CreateNotify:
+                createWindow = ev.xcreatewindow.window;
+                break;
+
+            case MapNotify:
+                if (createWindow == ev.xmap.window) {
+                    initWindow(display, ev.xmap.window, p, &clients);
+                    createWindow = None;
+                }
+                break;
+            case ConfigureNotify:
+                for (i = 0; i < clients.len; i++) {
+                    if (clients.data[i].window != ev.xconfigure.window)
+                        continue;
+
+                    XMoveResizeWindow(display, clients.data[i].border, ev.xconfigure.x, ev.xconfigure.y - 32, ev.xconfigure.width, 32);
+                    clients.data[i].width = ev.xconfigure.width;
+                }
                 break;
             default:
-
                 XFlush(display);
                 ev.type = 0;
                 break;
@@ -458,12 +545,19 @@ int main(int argc, char** argv) {
 
     quit:
 
+    for (i = 0; i < sizeof(cursors) / sizeof(Cursor); i++)
+        XFreeCursor(display, cursors[i]);
+
     XSetInputFocus(display, XDefaultRootWindow(display), RevertToNone, CurrentTime);
 
     XFreePixmap(display, p);
-    for (i = 0; i < clients.len; i++)
+    for (i = 0; i < clients.len; i++) {
         XDestroyWindow(display, clients.data[i].border);
-    
+        
+        if (clients.data[i].title != None)
+            XFreePixmap(display, clients.data[i].title);
+    }
+
     free(clients.data);
 
     XCloseDisplay(display);
